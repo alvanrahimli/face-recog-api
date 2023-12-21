@@ -1,15 +1,14 @@
 import shutil
 
 import cv2
-import numpy as np
-import face_recognition_models
 import face_recognition
 import os
+
+import numpy as np
 from PIL import Image
 from fastapi import FastAPI, File, Form, UploadFile
 from starlette.responses import JSONResponse
 import random
-from models import TrainRequest
 
 
 def load_known_faces(people_folder):
@@ -32,7 +31,7 @@ def load_face(img_path):
     return face_encodings
 
 
-def recognize_faces(image_path, face_encodings):
+def recognize_faces(image_path, face_encodings) -> list[str]:
     image_name = image_path.split("/")[-1]
     original_image = cv2.cvtColor(np.array(Image.open(image_path)), cv2.COLOR_BGR2RGB)
 
@@ -40,6 +39,7 @@ def recognize_faces(image_path, face_encodings):
     unknown_face_locations = face_recognition.face_locations(unknown_image)
     unknown_face_encodings = face_recognition.face_encodings(unknown_image, unknown_face_locations)
 
+    people_in_pic = []
     face_locations = face_recognition.face_locations(unknown_image)
 
     for index, face_encoding in enumerate(unknown_face_encodings):
@@ -50,6 +50,7 @@ def recognize_faces(image_path, face_encodings):
                 name = person_name
                 break
 
+        people_in_pic.append(name)
         (x, y, w, z) = face_locations[index]
         cv2.rectangle(original_image, (z - 10, w + 10), (y + 10, x - 10), (50, 205, 50), 2)
         font = cv2.FONT_HERSHEY_DUPLEX
@@ -57,14 +58,14 @@ def recognize_faces(image_path, face_encodings):
 
     os.makedirs("output", exist_ok=True)
     cv2.imwrite(f"output/{image_name}", original_image)
+    return people_in_pic
 
 
 known_face_encodings = load_known_faces("People/")
 print("Learned initial data!")
 
-# recognize_faces("./People/ahmad-samir-alvan.jpg", known_face_encodings)
-
 app = FastAPI()
+people_names = []
 
 
 @app.post("/train")
@@ -90,7 +91,7 @@ async def train(name: str, image: UploadFile) -> JSONResponse:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
-@app.post("/recognize")
+@app.post("/check-attendance")
 async def recognize(file: UploadFile) -> JSONResponse:
     try:
         if not os.path.exists("Inputs"):
@@ -101,8 +102,18 @@ async def recognize(file: UploadFile) -> JSONResponse:
         with open(file_name, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        recognize_faces(file_name, known_face_encodings)
+        people_in_pic = recognize_faces(file_name, known_face_encodings)
+        missing_people = [element for element in people_names if element not in people_in_pic]
+        return JSONResponse(content={
+            "message": f"Attendance check finished",
+            "missingPeople": missing_people
+        }, status_code=200)
 
-        return JSONResponse(content={"message": f"Detection result saved at \"output/\""}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.post("/set-names")
+async def set_names(names: str):
+    global people_names
+    people_names = str.split(names, ";")
